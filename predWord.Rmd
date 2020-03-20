@@ -1,0 +1,111 @@
+---
+title: "Word Prediction using SwiftKey data"
+author: "Rinnette N. Ramdhanie"
+date: "8 March 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadlibs}
+        library(tm)
+        library(SnowballC)
+        library(ggplot2)
+        library(RWeka)
+
+```
+
+## Read Data
+```{r createCorpus}
+
+        con <- file("../data/en_US.twitter.txt", "r")
+        twitter <- readLines(con)
+        close(con)
+
+        con <- file("../data/en_US.blogs.txt", "r")
+        blogs <- readLines(con)
+        close(con)
+        
+        con <- file("../data/en_US.news.txt", "rb")
+        news <- readLines(con)
+        close(con)
+
+        sampleTwitter <- twitter[rbinom(n = length(twitter), size = 1, prob = 0.1) == 1]
+        sampleBlogs <- blogs[rbinom(n = length(blogs), size = 1, prob = 0.1) == 1]
+        sampleNews <- news[rbinom(n = length(news), size = 1, prob = 0.1) == 1]
+        
+        sampleAll <- c(sampleTwitter, sampleBlogs, sampleNews)
+        
+        outCon <- file("../data/sample.txt", "w")
+        writeLines(sampleAll, outCon)
+        close(outCon)
+        
+        txtCorpus <- VCorpus(VectorSource(sampleAll))
+
+```
+
+## Clean data
+```{r cleanData}
+       
+        cleanCorpus <- tm_map(txtCorpus, stripWhitespace)
+        cleanCorpus <- tm_map(cleanCorpus, content_transformer(tolower))
+        cleanCorpus <- tm_map(cleanCorpus, removePunctuation)
+        cleanCorpus <- tm_map(cleanCorpus, removeNumbers)
+        cleanCorpus <- tm_map(cleanCorpus, removeWords, stopwords("english"))
+        cleanCorpus <- tm_map(cleanCorpus, stemDocument)
+        #cleanCorpus <- tm_map(cleanCorpus, PlainTextDocument)
+
+```
+
+## Exploratory Analysis
+
+```{r createDTM}
+        dtm <- DocumentTermMatrix(cleanCorpus)
+        #dtm_rmSparse <- removeSparseTerms(dtm, 0.9)
+
+```
+
+```{r findFreqWords}
+        # Find terms that occur at least 1000 times
+                freqTerms <- dtm[ ,findFreqTerms(dtm, 1000)]
+        
+        # Find the number of times each word occurs across all documents
+                freqSum <- colSums(as.matrix(freqTerms))
+                
+        # Order frequency from highest occuring to lowest
+                freqOrdered <- freqSum[order(freqSum, decreasing = TRUE)]
+
+```
+
+```{r plotFreq}
+        # convert the ordered frequencies to a data frame
+                wordFreqDF <- data.frame(word = names(freqOrdered), freq = freqOrdered)
+
+        # plot graph of the top 20 words
+                top20 <- head(wordFreqDF, 20)
+                ggplot(top20, aes(x = reorder(word, -freq), y=freq)) +
+                        geom_bar(stat = "identity", fill = "#3296FF") +
+                        ggtitle("Top 20 Words") +
+                        scale_y_continuous(name = "Frequency", breaks=seq(0, 35000, 5000)) +
+                        xlab("Most Frequently Occurring Words") +
+                        theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+
+```{r getNgrams}
+        BigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), 
+                                              use.names = FALSE)
+        bigramTDM = TermDocumentMatrix(cleanCorpus, 
+                control = list(tokenize = BigramTokenizer))
+        # control = list(bounds = list(local = c(2,Inf)))
+        
+        freq = sort(rowSums(as.matrix(bigramTDM)),decreasing = TRUE)
+        freqdf = data.frame(word=names(freq), freq=freq)
+        head(freq.df, 20)
+
+
+```
+
