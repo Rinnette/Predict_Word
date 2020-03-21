@@ -1,24 +1,28 @@
 ---
-title: "Word Prediction using SwiftKey data"
+title: "Word Prediction using SwiftKey data - Milestone Report"
 author: "Rinnette N. Ramdhanie"
-date: "20 March 2020"
+date: "8 March 2020"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r loadlibs}
         library(tm)
         library(SnowballC)
         library(ggplot2)
-        library(RWeka)
-
 ```
 
-## Read Data
-```{r readFiles}
+## Overview
+The corpora used for this analysis was obtained by a web crawler from different types of websites including newspapers, blogs and twitter. After downloading the data ...
+
+
+## Reading and Sampling the Data
+The data was read using the readLines() function.
+
+```{r readFiles, echo = TRUE}
 
         con <- file("../data/en_US.twitter.txt", "r")
         twitter <- readLines(con)
@@ -33,21 +37,32 @@ knitr::opts_chunk$set(echo = TRUE)
         close(con)
 ```
 
-```{r summaryStats}
-        numWords_twitter <- sum(str_count(twitter, '\\w+'))
-        numWords_blogs <- sum(str_count(blogs, '\\w+'))
-        numWords_news <- sum(str_count(news, '\\w+'))
+Some basic summary information for the datasets are provided below inclugint he size of each file in MB, the number of lines in each file as well as the number of words.
 
-        summaryStats <- data.frame("FileName" = c("Twitter", "Blogs", "News"),
-                                   "NumberOfLines" = c(length(twitter), length(blogs), length(news)),
-                                   "NumberOfWords" = c(numWords_twitter, numWords_blogs, 
+```{r summaryStats}
+        # Get size of files in MB
+                twitterSize <- file.info("../data/en_US.twitter.txt")$size / 1000000
+                blogsSize <- file.info("../data/en_US.blogs.txt")$size / 1000000
+                newsSize <- file.info("../data/en_US.news.txt")$size / 1000000
+
+        # Get the number of words in each file
+                numWords_twitter <- sum(str_count(twitter, '\\w+'))
+                numWords_blogs <- sum(str_count(blogs, '\\w+'))
+                numWords_news <- sum(str_count(news, '\\w+'))
+
+        summaryStats <- data.frame("File_Name" = c("Twitter", "Blogs", "News"),
+                                   "File_Size_MB" = c(twitterSize, blogsSize, newsSize),
+                                   "Number_Of_Lines" = c(length(twitter), length(blogs), length(news)),
+                                   "Number_Of_Words" = c(numWords_twitter, numWords_blogs, 
                                                        numWords_news))
         summaryStats
 
 ```
 
 
-```{r getSamples}
+Ten percent of each dataset was sampled and concatenated into one file for use in the rest of the analysis.  The sampled data was saved in a file so that the analysis will remain reproducible.
+
+```{r sampleData}
 
         sampleTwitter <- twitter[rbinom(n = length(twitter), size = 1, prob = 0.1) == 1]
         sampleBlogs <- blogs[rbinom(n = length(blogs), size = 1, prob = 0.1) == 1]
@@ -58,10 +73,23 @@ knitr::opts_chunk$set(echo = TRUE)
         outCon <- file("../data/sample.txt", "w")
         writeLines(sampleAll, outCon)
         close(outCon)
-        
-        txtCorpus <- VCorpus(VectorSource(sampleAll))
+```
+     
+The saved sample file was read and saved as a corpus.
+
+```{r createCorpus}    
+        # Read sample
+                con <- file("../sample.txt", "r")
+                sample <- readLines(con)
+                close(con)
+
+        # Create corpus
+                txtCorpus <- VCorpus(VectorSource(sample))
 
 ```
+
+
+
 
 ## Clean data
 ```{r cleanData}
@@ -72,28 +100,22 @@ knitr::opts_chunk$set(echo = TRUE)
         cleanCorpus <- tm_map(cleanCorpus, removeNumbers)
         cleanCorpus <- tm_map(cleanCorpus, removeWords, stopwords("english"))
         cleanCorpus <- tm_map(cleanCorpus, stemDocument)
-        #cleanCorpus <- tm_map(cleanCorpus, PlainTextDocument)
-
 ```
 
 ## Exploratory Analysis
 
-```{r createDTM}
-        #dtm <- DocumentTermMatrix(cleanCorpus)
-                tdm <- TermDocumentMatrix((cleanCorpus))
-
-```
 
 ```{r findFreqWords}
+        # Create a term document matrix
+                tdm <- TermDocumentMatrix((cleanCorpus))
+
         # Find terms that occur at least 1000 times
-                #freqTerms <- dtm[ ,findFreqTerms(dtm, 1000)]
-                       freqTerms <- tdm[findFreqTerms(dtm, 1000), ] 
+                freqTerms <- tdm[findFreqTerms(dtm, 1000), ] 
         
         # Find the number of times each word occurs across all documents
-                #freqSum <- colSums(as.matrix(freqTerms))
-                        freqSum <- rowSums(as.matrix(freqTerms))
+                freqSum <- rowSums(as.matrix(freqTerms))
                 
-        # Order frequency from highest occuring to lowest
+        # Order frequency from highest to lowest
                 freqOrdered <- freqSum[order(freqSum, decreasing = TRUE)]
                 
         # Save ordered frequencies to a data frame
@@ -102,17 +124,16 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r plotFreqWords}
-
         # plot graph of the top 20 words
                 top20Words <- head(wordFreqDF, 20)
-                ggplot(top20, aes(x = reorder(word, -freq), y=freq)) +
+                top20Words <- top20Words[order(top20Words$freq, decreasing = FALSE), ]
+                ggplot(top20Words, aes(x = reorder(word, freq), y=freq)) +
                         geom_bar(stat = "identity", fill = "#3296FF") +
                         ggtitle("Top 20 Words") +
                         scale_y_continuous(name = "Frequency", breaks=seq(0, 35000, 5000)) +
                         xlab("Most Frequently Occurring Words") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
-
 ```
 
 
@@ -120,47 +141,38 @@ knitr::opts_chunk$set(echo = TRUE)
         BigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "),
                                               use.names = FALSE)
         bigramTDM = TermDocumentMatrix(cleanCorpus, control = list(tokenize = BigramTokenizer))
-        # control = list(bounds = list(local = c(2,Inf)))
-
         freqBG <- rowSums(as.matrix(bigramTDM[findFreqTerms(bigramTDM, 100), ]))
         BGOrdered <- freqBG[order(freqBG, decreasing = TRUE)]
-        
         bigramDF <- data.frame(word = names(BGOrdered), freq = BGOrdered)
         
 ```
 
 ```{r plotFreqBigrams}
-
         # plot graph of the top 20 bigrams
                 top20BG <- head(bigramDF, 20)
-                ggplot(top20BG, aes(x = reorder(word, -freq), y=freq)) +
+                ggplot(top20BG, aes(x = reorder(word, freq), y=freq)) +
                         geom_bar(stat = "identity", fill = "#008040") +
                         ggtitle("Top 20 Bigrams") +
                         scale_y_continuous(name = "Frequency", breaks=seq(0, 2500, 250)) +
                         xlab("Most Frequently Occurring Bigrams") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
-
 ```
 
 ```{r getTrigrams}
         TrigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 3), paste, collapse = " "),
                                               use.names = FALSE)
         trigramTDM = TermDocumentMatrix(cleanCorpus, control = list(tokenize = TrigramTokenizer))
-        # control = list(bounds = list(local = c(2,Inf)))
-
         freqTG <- rowSums(as.matrix(trigramTDM[findFreqTerms(trigramTDM, 100), ]))
         TGOrdered <- freqTG[order(freqTG, decreasing = TRUE)]
-        
         trigramDF <- data.frame(word = names(TGOrdered), freq = TGOrdered)
         
 ```
 
 ```{r plotFreqTrigrams}
-
-        # plot graph of the top 20 bigrams
+        # plot graph of the top 20 trigrams
                 top20TG <- head(trigramDF, 20)
-                ggplot(top20TG, aes(x = reorder(word, -freq), y=freq)) +
+                ggplot(top20TG, aes(x = reorder(word, freq), y=freq)) +
                         geom_bar(stat = "identity", fill = "#0a234a") +
                         ggtitle("Top 20 Trigrams") +
                         scale_y_continuous(name = "Frequency", breaks=seq(0, 350, 50)) +
