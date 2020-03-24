@@ -9,20 +9,23 @@ output: html_document
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-```{r loadlibs}
+```{r loadlibs, warning=FALSE, message=FALSE}
         library(tm)
+        library(stringr)
+        library(slam)
         library(SnowballC)
         library(ggplot2)
 ```
 
 ## Overview
-The corpora used for this analysis was obtained by a web crawler from different types of websites including newspapers, blogs and twitter. After downloading the data ...
+The corpora used for this analysis was obtained from different types of websites including newspapers, blogs and twitter. After downloading the data, it was transformed for analysis.  A summary of the most frequent words, bigrams and trigrams is provided. Note that the report was written so that it could be understood by a non-data scientist could appreciate it.  As a result all code is provided in an appendix.
 
 
 ## Reading and Sampling the Data
-The data was read using the readLines() function.
+The data was read into 3 separate files called **twitter**, **blogs** and **news**.
 
-```{r readFiles, echo = TRUE}
+```{r readFiles, warning = FALSE, message = FALSE}
+# use eval = FALSE to not run a chunk of code
 
         con <- file("../data/en_US.twitter.txt", "r")
         twitter <- readLines(con)
@@ -37,9 +40,9 @@ The data was read using the readLines() function.
         close(con)
 ```
 
-Some basic summary information for the datasets are provided below inclugint he size of each file in MB, the number of lines in each file as well as the number of words.
+Some basic summary information for the datasets are provided below including the size of each file in MB, as well as the number of lines and the number of words in each file.
 
-```{r summaryStats}
+```{r summaryStats, echo = TRUE}
         # Get size of files in MB
                 twitterSize <- file.info("../data/en_US.twitter.txt")$size / 1000000
                 blogsSize <- file.info("../data/en_US.blogs.txt")$size / 1000000
@@ -59,8 +62,7 @@ Some basic summary information for the datasets are provided below inclugint he 
 
 ```
 
-
-Ten percent of each dataset was sampled and concatenated into one file for use in the rest of the analysis.  The sampled data was saved in a file so that the analysis will remain reproducible.
+Since the files are very large, ten percent of each dataset was sampled and concatenated into one file for use in the rest of the analysis.  The sample will give us an accurate approximation to the results that would be obtained if all the data were used.
 
 ```{r sampleData}
 
@@ -68,55 +70,67 @@ Ten percent of each dataset was sampled and concatenated into one file for use i
         sampleBlogs <- blogs[rbinom(n = length(blogs), size = 1, prob = 0.1) == 1]
         sampleNews <- news[rbinom(n = length(news), size = 1, prob = 0.1) == 1]
         
-        sampleAll <- c(sampleTwitter, sampleBlogs, sampleNews)
+        sample <- c(sampleTwitter, sampleBlogs, sampleNews)
         
         outCon <- file("../data/sample.txt", "w")
-        writeLines(sampleAll, outCon)
+        writeLines(sample, outCon)
         close(outCon)
 ```
      
-The saved sample file was read and saved as a corpus.
+
+## Create Corpus and Clean the data
+
+A corpus was created from the sample file to be used for further analysis.
 
 ```{r createCorpus}    
         # Read sample
-                con <- file("../sample.txt", "r")
-                sample <- readLines(con)
-                close(con)
+                # con <- file("../sample.txt", "r")
+                # sample <- readLines(con)
+                # close(con)
 
         # Create corpus
                 txtCorpus <- VCorpus(VectorSource(sample))
 
 ```
 
+The corpus was transformed by converting all letters to lower case, removing numbers as well as punctuation except hyphens between words and apostrophes in contractions like *don't*, *can't* etc.  White spaces were then stripped.  A decison was made to not remove stopwords, such as *a*, *the*, *and* etc., so that these can also be predicted by the model.
 
 
-
-## Clean data
 ```{r cleanData}
        
-        cleanCorpus <- tm_map(txtCorpus, stripWhitespace)
-        cleanCorpus <- tm_map(cleanCorpus, content_transformer(tolower))
-        cleanCorpus <- tm_map(cleanCorpus, removePunctuation)
-        cleanCorpus <- tm_map(cleanCorpus, removeNumbers)
-        cleanCorpus <- tm_map(cleanCorpus, removeWords, stopwords("english"))
-        cleanCorpus <- tm_map(cleanCorpus, stemDocument)
+        # cleanCorpus <- tm_map(txtCorpus, content_transformer(tolower))
+        # cleanCorpus <- tm_map(cleanCorpus, removeNumbers)
+        # cleanCorpus <- tm_map(cleanCorpus, removePunctuation, preserve_intra_word_dashes = TRUE, 
+        #                       preserve_intra_word_contractions = TRUE)
+        # cleanCorpus <- tm_map(cleanCorpus, stripWhitespace)
+
+        cleanCorpus <- tm_map(txtCorpus, content_transformer(tolower))%>%
+                        tm_map(removeNumbers)%>%
+                        tm_map(removePunctuation, preserve_intra_word_dashes = TRUE, 
+                               preserve_intra_word_contractions = TRUE)%>%
+                        tm_map(stripWhitespace)
 ```
 
 ## Exploratory Analysis
 
+A term document matrix was created from the corpus.  This is simply a table where the rows represent the different documents in the corpus and the columns represent words (terms) from the documents.  The cells in the table represent the number of times the word appears in each document.
 
-```{r findFreqWords}
+```{r createTDM}
         # Create a term document matrix
                 tdm <- TermDocumentMatrix((cleanCorpus))
+```
 
-        # Find terms that occur at least 1000 times
-                freqTerms <- tdm[findFreqTerms(dtm, 1000), ] 
-        
-        # Find the number of times each word occurs across all documents
-                freqSum <- rowSums(as.matrix(freqTerms))
+### Word Frequency
+The frequency of each word was then obtained, ordered from most frequent to least frequent and plotted on a bar chart. Note that the most frequently appearing words are stopwords as these were left in the data to be used in the prediction model.  If some sort of sentiment analysis was being done where the meaning of the words were important then the stopwords would have been removed.  In this case since we are predicting words they were left in.
+
+
+```{r findFreqWords}
+
+        # Find the frequency of each word
+                freqWords <- row_sums(tdm[findFreqTerms(tdm), ])
                 
         # Order frequency from highest to lowest
-                freqOrdered <- freqSum[order(freqSum, decreasing = TRUE)]
+                freqOrdered <- freqWords[order(freqWords, decreasing = TRUE)]
                 
         # Save ordered frequencies to a data frame
                 wordFreqDF <- data.frame(word = names(freqOrdered), freq = freqOrdered)
@@ -124,36 +138,44 @@ The saved sample file was read and saved as a corpus.
 ```
 
 ```{r plotFreqWords}
-        # plot graph of the top 20 words
+        # Plot the top 20 words
                 top20Words <- head(wordFreqDF, 20)
-                top20Words <- top20Words[order(top20Words$freq, decreasing = FALSE), ]
                 ggplot(top20Words, aes(x = reorder(word, freq), y=freq)) +
                         geom_bar(stat = "identity", fill = "#3296FF") +
                         ggtitle("Top 20 Words") +
-                        scale_y_continuous(name = "Frequency", breaks=seq(0, 35000, 5000)) +
+                        ylab("Frequency") +
                         xlab("Most Frequently Occurring Words") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
 ```
 
+### Frequent n-grams
+An n-gram is a sequence of n words that occur together in the data. The most frequent bigrams (2 words) and trigrams (3 words) were obtained and plotted below. Again note that mpst combinations include stopwords as these were left in the data.
+
 
 ```{r getBigrams}
         BigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "),
                                               use.names = FALSE)
-        bigramTDM = TermDocumentMatrix(cleanCorpus, control = list(tokenize = BigramTokenizer))
-        freqBG <- rowSums(as.matrix(bigramTDM[findFreqTerms(bigramTDM, 100), ]))
+        bigramTDM <- TermDocumentMatrix(cleanCorpus, control = list(tokenize = BigramTokenizer))
+        
+        freqBG <- row_sums(bigramTDM[findFreqTerms(bigramTDM), ])
         BGOrdered <- freqBG[order(freqBG, decreasing = TRUE)]
         bigramDF <- data.frame(word = names(BGOrdered), freq = BGOrdered)
+        
+        # freqBG <- rowSums(as.matrix(bigramTDM[findFreqTerms(bigramTDM, 100), ]))
+        # BGOrdered <- freqBG[order(freqBG, decreasing = TRUE)]
+        # bigramDF <- data.frame(word = names(BGOrdered), freq = BGOrdered)
         
 ```
 
 ```{r plotFreqBigrams}
-        # plot graph of the top 20 bigrams
+        # Plot the top 20 bigrams
                 top20BG <- head(bigramDF, 20)
                 ggplot(top20BG, aes(x = reorder(word, freq), y=freq)) +
-                        geom_bar(stat = "identity", fill = "#008040") +
+                        geom_bar(stat = "identity", fill = "#4d69bd") +
                         ggtitle("Top 20 Bigrams") +
-                        scale_y_continuous(name = "Frequency", breaks=seq(0, 2500, 250)) +
+                        #scale_y_continuous(name = "Frequency", breaks=seq(0, 2500, 250)) +
+                        ylab("Frequency") +
                         xlab("Most Frequently Occurring Bigrams") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
@@ -163,21 +185,28 @@ The saved sample file was read and saved as a corpus.
         TrigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 3), paste, collapse = " "),
                                               use.names = FALSE)
         trigramTDM = TermDocumentMatrix(cleanCorpus, control = list(tokenize = TrigramTokenizer))
-        freqTG <- rowSums(as.matrix(trigramTDM[findFreqTerms(trigramTDM, 100), ]))
+        
+        freqTG <- row_sums(trigramTDM[findFreqTerms(trigramTDM), ])
+        
+        #freqTG <- rowSums(as.matrix(trigramTDM[findFreqTerms(trigramTDM, 900), ]))
         TGOrdered <- freqTG[order(freqTG, decreasing = TRUE)]
         trigramDF <- data.frame(word = names(TGOrdered), freq = TGOrdered)
         
 ```
 
 ```{r plotFreqTrigrams}
-        # plot graph of the top 20 trigrams
+        # Plot the top 20 trigrams
                 top20TG <- head(trigramDF, 20)
                 ggplot(top20TG, aes(x = reorder(word, freq), y=freq)) +
                         geom_bar(stat = "identity", fill = "#0a234a") +
                         ggtitle("Top 20 Trigrams") +
-                        scale_y_continuous(name = "Frequency", breaks=seq(0, 350, 50)) +
+                        #scale_y_continuous(name = "Frequency", breaks=seq(0, 4000, 500)) +
                         xlab("Most Frequently Occurring Trigrams") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
 
 ```
+
+## Next Steps
+
+
