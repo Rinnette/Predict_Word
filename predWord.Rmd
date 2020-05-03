@@ -1,7 +1,7 @@
 ---
 title: "Word Prediction using SwiftKey data - Milestone Report"
 author: "Rinnette N. Ramdhanie"
-date: "8 March 2020"
+date: " 12 April 2020"
 output: html_document
 ---
 
@@ -11,14 +11,16 @@ knitr::opts_chunk$set(echo = FALSE)
 
 ```{r loadlibs, warning=FALSE, message=FALSE}
         library(tm)
+        library(dplyr)
         library(stringr)
         library(slam)
-        library(SnowballC)
         library(ggplot2)
 ```
 
 ## Overview
-The corpora used for this analysis was obtained from different types of websites including newspapers, blogs and twitter. After downloading the data, it was transformed for analysis.  A summary of the most frequent words, bigrams and trigrams is provided. Note that the report was written so that it could be understood by a non-data scientist could appreciate it.  As a result all code is provided in an appendix.
+The aim of this project is to build a predictive text model to make it easy to type text by providing options for the next word based on words already typed.  This report outlines the exploratory analysis that was done and provides a summary of how the model is being built.
+
+The corpora used for this analysis was obtained from different types of websites and sorted into 3 files: newspapers, blogs and twitter. A sample of the data was cleaned and analysed then used to create the model.
 
 
 ## Reading and Sampling the Data
@@ -59,22 +61,16 @@ Some basic summary information for the datasets are provided below including the
                                    "Number_Of_Words" = c(numWords_twitter, numWords_blogs, 
                                                        numWords_news))
         summaryStats
-
 ```
 
-Since the files are very large, ten percent of each dataset was sampled and concatenated into one file for use in the rest of the analysis.  The sample will give us an accurate approximation to the results that would be obtained if all the data were used.
+Since the files are very large, ten percent of each dataset was sampled and concatenated into one file for use in the rest of the analysis.  The sample should give us an accurate approximation to the results that would be obtained if all the data were used.
 
 ```{r sampleData}
 
         sampleTwitter <- twitter[rbinom(n = length(twitter), size = 1, prob = 0.1) == 1]
         sampleBlogs <- blogs[rbinom(n = length(blogs), size = 1, prob = 0.1) == 1]
         sampleNews <- news[rbinom(n = length(news), size = 1, prob = 0.1) == 1]
-        
-        sample <- c(sampleTwitter, sampleBlogs, sampleNews)
-        
-        outCon <- file("../data/sample.txt", "w")
-        writeLines(sample, outCon)
-        close(outCon)
+        sampleAll <- c(sampleTwitter, sampleBlogs, sampleNews)
 ```
      
 
@@ -82,49 +78,51 @@ Since the files are very large, ten percent of each dataset was sampled and conc
 
 A corpus was created from the sample file to be used for further analysis.
 
-```{r createCorpus}    
-        # Read sample
-                # con <- file("../sample.txt", "r")
-                # sample <- readLines(con)
-                # close(con)
-
-        # Create corpus
-                txtCorpus <- VCorpus(VectorSource(sample))
-
+```{r createCorpus}
+        sampleCorpus <- VCorpus(VectorSource(sampleAll))
 ```
 
-The corpus was transformed by converting all letters to lower case, removing numbers as well as punctuation except hyphens between words and apostrophes in contractions like *don't*, *can't* etc.  White spaces were then stripped.  A decison was made to not remove stopwords, such as *a*, *the*, *and* etc., so that these can also be predicted by the model.
+```{r getProfanity, message = FALSE, warning = FALSE}
+        con <- file("profanity.txt", "r")
+        profanity <- readLines(con)
+        close(con)
+```
 
 
-```{r cleanData}
-       
-        # cleanCorpus <- tm_map(txtCorpus, content_transformer(tolower))
-        # cleanCorpus <- tm_map(cleanCorpus, removeNumbers)
-        # cleanCorpus <- tm_map(cleanCorpus, removePunctuation, preserve_intra_word_dashes = TRUE, 
-        #                       preserve_intra_word_contractions = TRUE)
-        # cleanCorpus <- tm_map(cleanCorpus, stripWhitespace)
+The corpus was transformed by:
 
-        cleanCorpus <- tm_map(txtCorpus, content_transformer(tolower))%>%
+- converting all letters to lower case
+- removing numbers
+- removing punctuation except hyphens between words and apostrophes in contractions like *don't*, *can't* etc.  
+- removing profanity
+- stripping white spaces. 
+
+Note that a decision was made to not remove stopwords, such as *a*, *the*, *and* etc., so that these can also be predicted by the model.
+
+
+```{r cleanData, echo = TRUE}
+        cleanCorpus <- tm_map(sampleCorpus, content_transformer(tolower))%>%
                         tm_map(removeNumbers)%>%
                         tm_map(removePunctuation, preserve_intra_word_dashes = TRUE, 
                                preserve_intra_word_contractions = TRUE)%>%
+                        tm_map(removeWords, profanity)%>%
                         tm_map(stripWhitespace)
 ```
 
 ## Exploratory Analysis
 
-A term document matrix was created from the corpus.  This is simply a table where the rows represent the different documents in the corpus and the columns represent words (terms) from the documents.  The cells in the table represent the number of times the word appears in each document.
+A term document matrix was created from the corpus.  This is simply a table where the rows represent the different documents in the corpus and the columns represent words (terms) from the documents.  The cells in the table represent the number of times a word appears in each document.  This format makes it easier to manipulate the data and obtain frequency tables.
+
+## Most Frequent n-grams
 
 ```{r createTDM}
         # Create a term document matrix
-                tdm <- TermDocumentMatrix((cleanCorpus))
+                tdm <- TermDocumentMatrix(cleanCorpus)
 ```
 
-### Word Frequency
-The frequency of each word was then obtained, ordered from most frequent to least frequent and plotted on a bar chart. Note that the most frequently appearing words are stopwords as these were left in the data to be used in the prediction model.  If some sort of sentiment analysis was being done where the meaning of the words were important then the stopwords would have been removed.  In this case since we are predicting words they were left in.
+An n-gram is a sequence of n words that occur together in the data. The most frequent unigrams (1 word), bigrams (2 words) and trigrams (3 words) were obtained and plotted below. Note that most n-grams include stopwords as these were left in the data to be used in the prediction model.
 
-
-```{r findFreqWords}
+```{r getUnigrams}
 
         # Find the frequency of each word
                 freqWords <- row_sums(tdm[findFreqTerms(tdm), ])
@@ -133,25 +131,22 @@ The frequency of each word was then obtained, ordered from most frequent to leas
                 freqOrdered <- freqWords[order(freqWords, decreasing = TRUE)]
                 
         # Save ordered frequencies to a data frame
-                wordFreqDF <- data.frame(word = names(freqOrdered), freq = freqOrdered)
+                unigramDF <- data.frame(word = names(freqOrdered), freq = freqOrdered, 
+                                        stringsAsFactors = FALSE)
 
 ```
 
-```{r plotFreqWords}
+```{r plotFreqUnigrams}
         # Plot the top 20 words
-                top20Words <- head(wordFreqDF, 20)
+                top20Words <- head(unigramDF, 20)
                 ggplot(top20Words, aes(x = reorder(word, freq), y=freq)) +
-                        geom_bar(stat = "identity", fill = "#3296FF") +
-                        ggtitle("Top 20 Words") +
+                        geom_bar(stat = "identity", fill = "#396ded") +
+                        ggtitle("Top 20 Unigrams") +
                         ylab("Frequency") +
                         xlab("Most Frequently Occurring Words") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
 ```
-
-### Frequent n-grams
-An n-gram is a sequence of n words that occur together in the data. The most frequent bigrams (2 words) and trigrams (3 words) were obtained and plotted below. Again note that mpst combinations include stopwords as these were left in the data.
-
 
 ```{r getBigrams}
         BigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "),
@@ -160,21 +155,15 @@ An n-gram is a sequence of n words that occur together in the data. The most fre
         
         freqBG <- row_sums(bigramTDM[findFreqTerms(bigramTDM), ])
         BGOrdered <- freqBG[order(freqBG, decreasing = TRUE)]
-        bigramDF <- data.frame(word = names(BGOrdered), freq = BGOrdered)
-        
-        # freqBG <- rowSums(as.matrix(bigramTDM[findFreqTerms(bigramTDM, 100), ]))
-        # BGOrdered <- freqBG[order(freqBG, decreasing = TRUE)]
-        # bigramDF <- data.frame(word = names(BGOrdered), freq = BGOrdered)
-        
+        bigramDF <- data.frame(bigram = names(BGOrdered), freq = BGOrdered, stringsAsFactors = FALSE)
 ```
 
 ```{r plotFreqBigrams}
         # Plot the top 20 bigrams
                 top20BG <- head(bigramDF, 20)
-                ggplot(top20BG, aes(x = reorder(word, freq), y=freq)) +
-                        geom_bar(stat = "identity", fill = "#4d69bd") +
+                ggplot(top20BG, aes(x = reorder(bigram, freq), y=freq)) +
+                        geom_bar(stat = "identity", fill = "#24479c") +
                         ggtitle("Top 20 Bigrams") +
-                        #scale_y_continuous(name = "Frequency", breaks=seq(0, 2500, 250)) +
                         ylab("Frequency") +
                         xlab("Most Frequently Occurring Bigrams") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -188,25 +177,27 @@ An n-gram is a sequence of n words that occur together in the data. The most fre
         
         freqTG <- row_sums(trigramTDM[findFreqTerms(trigramTDM), ])
         
-        #freqTG <- rowSums(as.matrix(trigramTDM[findFreqTerms(trigramTDM, 900), ]))
         TGOrdered <- freqTG[order(freqTG, decreasing = TRUE)]
-        trigramDF <- data.frame(word = names(TGOrdered), freq = TGOrdered)
+        trigramDF <- data.frame(trigram = names(TGOrdered), freq = TGOrdered, stringsAsFactors = FALSE)
         
 ```
 
 ```{r plotFreqTrigrams}
         # Plot the top 20 trigrams
                 top20TG <- head(trigramDF, 20)
-                ggplot(top20TG, aes(x = reorder(word, freq), y=freq)) +
-                        geom_bar(stat = "identity", fill = "#0a234a") +
+                ggplot(top20TG, aes(x = reorder(trigram, freq), y=freq)) +
+                        geom_bar(stat = "identity", fill = "#10214a") +
                         ggtitle("Top 20 Trigrams") +
-                        #scale_y_continuous(name = "Frequency", breaks=seq(0, 4000, 500)) +
                         xlab("Most Frequently Occurring Trigrams") +
                         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
                         coord_flip()
-
 ```
 
 ## Next Steps
+The frequency n-gram tables obtained from this analysis will be used as the training data to create the prediction model.  Note that the highest n-gram used will be trigrams.  In the unigram table, there are over 244,000 unique words but only 500 words are required to cover 55% of the words in the data, and 13,000 words are required to cover about 91% of words in the data. After removing words which have a frequency of less than 2 (about 231,000 words), the remaining words will still cover over 90% of words in the data, as well as make the model smaller and hopefully more efficient.  To cater for a word that does not appear in the table, a generic word, UNK (or UNKNOWN) will be included with a frequency of 1. If a word is not found in the vocabulary, the model defaults to this word.  The model will be trained using this data and will treat UNK like a regular word.
 
+Using the frequencies, a probability for the occurrence of each n-gram will be calculated.  In the case where word(s) appear in a context not seen in the training data, a smoothing method will be applied to prevent the model from assigning zero probability to these unseen n-grams.  Smoothing takes some probabilty from the n-grams that occur more frequently and assigns it to n-grams never seen before.  The Kneser-Ney smoothing method was used in this project.
 
+The probabilities that are calculated can be thought of as transition probabilities allowing the model to predict (or transition to) the next word given the current word.  This is similar to how Markov Chains work - predicting the next state given the current state, using probabilities.  Markov Chains therefore provide a convenient way to store and query n-gram probabilities, implemented by the use of a transition matrix which is simply a matrix of probabilities.
+
+The Shiny app to be developed will use the last one or two words entered by the user as input and predicts the next word the user might enter.  Three options will be provided to the user.  The plan is to predict and provide options after each word that is typed by the user, similar to the smart keyboard used on mobile devices. 
